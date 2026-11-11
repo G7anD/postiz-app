@@ -1238,7 +1238,8 @@ export class InstagramProvider
       case 'saves':
         return 'Saves';
       case 'replies':
-        return 'Replies';
+        // IG account-level `replies` only counts replies to Stories, not post comments
+        return 'Story Replies';
       case 'accounts_engaged':
         return 'Accounts Engaged';
       case 'total_interactions':
