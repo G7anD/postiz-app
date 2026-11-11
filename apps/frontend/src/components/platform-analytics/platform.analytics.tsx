@@ -120,9 +120,19 @@ export const PlatformAnalytics = () => {
       });
     }
     if (
-      ['facebook', 'linkedin-page', 'pinterest', 'youtube', 'x', 'gmb'].indexOf(
-        currentIntegration.identifier
-      ) !== -1
+      [
+        'facebook',
+        'instagram',
+        'instagram-standalone',
+        'linkedin-page',
+        'pinterest',
+        'youtube',
+        'threads',
+        'x',
+        'gmb',
+        'tiktok',
+        'tiktok-business',
+      ].indexOf(currentIntegration.identifier) !== -1
     ) {
       arr.push({
         key: 90,
@@ -130,7 +140,7 @@ export const PlatformAnalytics = () => {
       });
     }
     return arr;
-  }, [currentIntegration]);
+  }, [currentIntegration, t]);
   const keys = useMemo(() => {
     if (!currentIntegration) {
       return 7;
@@ -139,7 +149,7 @@ export const PlatformAnalytics = () => {
       return key;
     }
     return options[0]?.key;
-  }, [key, currentIntegration]);
+  }, [key, currentIntegration, options]);
 
   if (isLoading) {
     return (
@@ -314,6 +324,7 @@ export const PlatformAnalytics = () => {
                 name="date"
                 disableForm={true}
                 hideErrors={true}
+                value={keys}
                 onChange={(e) => setKey(+e.target.value)}
               >
                 {options.map((option) => (
