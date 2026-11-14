@@ -1560,11 +1560,15 @@ export class InstagramProvider
       return map;
     };
 
+    // engaged_audience_demographics only accepts this_week / this_month
     const fetchDemographic = async (
-      breakdownKey: 'country' | 'city' | 'age' | 'gender'
+      breakdownKey: 'country' | 'city' | 'age' | 'gender',
+      metric: 'follower_demographics' | 'engaged_audience_demographics' = 'follower_demographics'
     ): Promise<Record<string, number>> => {
+      const timeframe =
+        metric === 'engaged_audience_demographics' ? '&timeframe=this_month' : '';
       const res = await this.fetchIgJson(
-        `https://${type}/${META_GRAPH_API_VERSION}/${id}/insights?metric=follower_demographics&period=lifetime&metric_type=total_value&breakdown=${breakdownKey}&access_token=${accessToken}`
+        `https://${type}/${META_GRAPH_API_VERSION}/${id}/insights?metric=${metric}&period=lifetime${timeframe}&metric_type=total_value&breakdown=${breakdownKey}&access_token=${accessToken}`
       );
       const results =
         res?.data?.[0]?.total_value?.breakdowns?.[0]?.results || [];
@@ -1586,6 +1590,11 @@ export class InstagramProvider
       ageMap,
       genderMap,
       onlineHours,
+      reachAudienceTypeMap,
+      engagedCountryMap,
+      engagedCityMap,
+      engagedAgeMap,
+      engagedGenderMap,
     ] = await Promise.all([
       safeAnalyticsCall(
         'ig.views_by_format',
@@ -1645,6 +1654,31 @@ export class InstagramProvider
         },
         []
       ),
+      safeAnalyticsCall(
+        'ig.reach_by_follow_type',
+        () => fetchTotalBreakdown('reach', 'follow_type'),
+        {} as Record<string, number>
+      ),
+      safeAnalyticsCall(
+        'ig.engaged.country',
+        () => fetchDemographic('country', 'engaged_audience_demographics'),
+        {} as Record<string, number>
+      ),
+      safeAnalyticsCall(
+        'ig.engaged.city',
+        () => fetchDemographic('city', 'engaged_audience_demographics'),
+        {} as Record<string, number>
+      ),
+      safeAnalyticsCall(
+        'ig.engaged.age',
+        () => fetchDemographic('age', 'engaged_audience_demographics'),
+        {} as Record<string, number>
+      ),
+      safeAnalyticsCall(
+        'ig.engaged.gender',
+        () => fetchDemographic('gender', 'engaged_audience_demographics'),
+        {} as Record<string, number>
+      ),
     ]);
 
     const formatBreakdown = buildBreakdown(formatViewsMap, 8);
@@ -1671,6 +1705,23 @@ export class InstagramProvider
       });
     }
 
+    const reachAudienceTypeBreakdown = buildBreakdown(reachAudienceTypeMap, 6);
+    if (reachAudienceTypeBreakdown.length > 0) {
+      const sum = reachAudienceTypeBreakdown.reduce((a, b) => a + b.value, 0);
+      analytics.push({
+        label: 'Reach by Audience Type',
+        percentageChange: 0,
+        category: 'audience',
+        breakdown: reachAudienceTypeBreakdown,
+        data: [{ total: String(sum), date: today }],
+        // reach is unique per window, so ranges over 28 days add up window totals
+        note:
+          windows.length > 1
+            ? 'Summed across 28-day windows, may count a person more than once.'
+            : undefined,
+      });
+    }
+
     const followBreakdown = buildBreakdown(followsUnfollowsMap, 6);
     if (followBreakdown.length > 0) {
       const net =
@@ -1685,7 +1736,12 @@ export class InstagramProvider
       });
     }
 
-    const addDemoCard = (title: string, rawMap: Record<string, number>, limit = 10) => {
+    const addDemoCard = (
+      title: string,
+      rawMap: Record<string, number>,
+      limit = 10,
+      note?: string
+    ) => {
       const bd = buildBreakdown(rawMap, limit);
       if (bd.length > 0) {
         const sum = bd.reduce((a, b) => a + b.value, 0);
@@ -1695,6 +1751,7 @@ export class InstagramProvider
           category: 'audience',
           breakdown: bd,
           data: [{ total: String(sum), date: today }],
+          note,
         });
       }
     };
@@ -1703,6 +1760,11 @@ export class InstagramProvider
     addDemoCard('Audience by City', cityMap, 10);
     addDemoCard('Audience by Age', ageMap, 10);
     addDemoCard('Audience by Gender', genderMap, 6);
+    const engagedNote = 'This month so far, independent of the selected range.';
+    addDemoCard('Engaged Audience by Country', engagedCountryMap, 10, engagedNote);
+    addDemoCard('Engaged Audience by City', engagedCityMap, 10, engagedNote);
+    addDemoCard('Engaged Audience by Age', engagedAgeMap, 10, engagedNote);
+    addDemoCard('Engaged Audience by Gender', engagedGenderMap, 6, engagedNote);
 
     if (onlineHours.length > 0) {
       const peak = onlineHours.reduce(
@@ -1982,6 +2044,42 @@ export class InstagramProvider
         'minutes',
         (ms) => ms / 60000
       );
+
+      // breakdown is only valid for profile_activity, and Meta rejects it on
+      // Reels, so it runs on its own once the media type is known
+      const profileActivityData =
+        metaInfo && metaInfo.media_product_type !== 'REELS'
+          ? await safeAnalyticsCall(
+              'ig.post.profile_activity',
+              () =>
+                this.fetchIgJson(
+                  `https://${type}/${META_GRAPH_API_VERSION}/${postId}/insights?metric=profile_activity&breakdown=action_type&access_token=${accessToken}`
+                ),
+              null
+            )
+          : null;
+
+      const profileActivityBreakdown = buildBreakdown(
+        (
+          profileActivityData?.data?.[0]?.total_value?.breakdowns?.[0]
+            ?.results || []
+        ).map((row: any) => ({
+          label: (row.dimension_values || []).join(' / '),
+          value: Number(row.value) || 0,
+        })),
+        8
+      );
+      if (profileActivityBreakdown.length > 0) {
+        const sum = profileActivityBreakdown.reduce((a, b) => a + b.value, 0);
+        result.push({
+          label: 'Profile Activity',
+          percentageChange: 0,
+          aggregation: 'latest',
+          category: 'traffic',
+          breakdown: profileActivityBreakdown,
+          data: [{ total: String(sum), date: today }],
+        });
+      }
 
       const denom = metricsMap.get('reach') || metricsMap.get('views') || 0;
       const interactions =
