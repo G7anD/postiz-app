@@ -15,6 +15,7 @@ import mime from 'mime';
 import TelegramBot from 'node-telegram-bot-api';
 import { Integration } from '@prisma/client';
 import striptags from 'striptags';
+import { closeSync, fstatSync, openSync, readSync } from 'fs';
 
 const telegramBot = new TelegramBot(process.env.TELEGRAM_TOKEN!);
 // Added to support local storage posting
@@ -168,12 +169,131 @@ export class TelegramProvider extends SocialAbstract implements SocialProvider {
       return {
         type: mediaType,
         media: mediaUrl,
+        videoMeta:
+          mediaType === 'video' && mediaUrl.indexOf('http') !== 0
+            ? this.readVideoMeta(mediaUrl)
+            : undefined,
         fileOptions: {
           filename: media.path.split('/').pop(),
           contentType: mimeType || 'application/octet-stream',
         },
       };
     });
+  }
+
+  // Telegram does not read the dimensions of a video uploaded by a bot: without
+  // width / height it stores and shows the video as a 1:1 square. They are read
+  // here from the mp4 / mov header (moov > mvhd for the duration, the tkhd of the
+  // first video trak for the size), so no ffprobe is needed. Any file that can't
+  // be read this way is sent as before.
+  private readVideoMeta(
+    filePath: string
+  ): { width: number; height: number; duration?: number } | undefined {
+    let fd: number | undefined;
+    try {
+      fd = openSync(filePath, 'r');
+      const size = fstatSync(fd).size;
+      const head = Buffer.alloc(16);
+      let pos = 0;
+      let moov: Buffer | undefined;
+      while (pos + 8 <= size) {
+        readSync(fd, head, 0, 16, pos);
+        let len = head.readUInt32BE(0);
+        let headerSize = 8;
+        if (len === 1) {
+          len = Number(head.readBigUInt64BE(8));
+          headerSize = 16;
+        } else if (len === 0) {
+          len = size - pos;
+        }
+        if (len < headerSize) {
+          break;
+        }
+        if (head.toString('latin1', 4, 8) === 'moov') {
+          moov = Buffer.alloc(len - headerSize);
+          readSync(fd, moov, 0, moov.length, pos + headerSize);
+          break;
+        }
+        pos += len;
+      }
+      if (!moov) {
+        return undefined;
+      }
+
+      const boxes = (buf: Buffer, start: number, end: number) => {
+        const list = [] as { type: string; start: number; end: number }[];
+        let p = start;
+        while (p + 8 <= end) {
+          let len = buf.readUInt32BE(p);
+          let headerSize = 8;
+          if (len === 1) {
+            len = Number(buf.readBigUInt64BE(p + 8));
+            headerSize = 16;
+          } else if (len === 0) {
+            len = end - p;
+          }
+          if (len < headerSize || p + len > end) {
+            break;
+          }
+          list.push({
+            type: buf.toString('latin1', p + 4, p + 8),
+            start: p + headerSize,
+            end: p + len,
+          });
+          p += len;
+        }
+        return list;
+      };
+
+      let duration: number | undefined;
+      let width: number | undefined;
+      let height: number | undefined;
+      for (const box of boxes(moov, 0, moov.length)) {
+        if (box.type === 'mvhd') {
+          const v1 = moov[box.start] === 1;
+          const timescale = moov.readUInt32BE(box.start + (v1 ? 20 : 12));
+          const length = v1
+            ? Number(moov.readBigUInt64BE(box.start + 24))
+            : moov.readUInt32BE(box.start + 16);
+          if (timescale) {
+            duration = Math.round(length / timescale);
+          }
+        }
+        if (box.type === 'trak' && width === undefined) {
+          const children = boxes(moov, box.start, box.end);
+          const mdia = children.find((c) => c.type === 'mdia');
+          const hdlr =
+            mdia &&
+            boxes(moov, mdia.start, mdia.end).find((c) => c.type === 'hdlr');
+          const tkhd = children.find((c) => c.type === 'tkhd');
+          if (
+            !hdlr ||
+            !tkhd ||
+            moov.toString('latin1', hdlr.start + 8, hdlr.start + 12) !== 'vide'
+          ) {
+            continue;
+          }
+          // tkhd ends with the 3x3 matrix and width / height (16.16 fixed);
+          // a matrix with a = 0 and b != 0 is a 90 / 270 degree rotation
+          const w = moov.readUInt32BE(tkhd.end - 8) / 65536;
+          const h = moov.readUInt32BE(tkhd.end - 4) / 65536;
+          const matrix = tkhd.end - 44;
+          const rotated =
+            moov.readInt32BE(matrix) === 0 &&
+            moov.readInt32BE(matrix + 4) !== 0;
+          width = Math.round(rotated ? h : w);
+          height = Math.round(rotated ? w : h);
+        }
+      }
+
+      return width && height ? { width, height, duration } : undefined;
+    } catch (err) {
+      return undefined;
+    } finally {
+      if (fd !== undefined) {
+        closeSync(fd);
+      }
+    }
   }
 
   private async sendMessage(
@@ -238,6 +358,9 @@ export class TelegramProvider extends SocialAbstract implements SocialProvider {
       const options = {
         caption: text,
         parse_mode: 'HTML' as const,
+        ...(media.type === 'video' && media.videoMeta
+          ? { ...media.videoMeta, supports_streaming: true }
+          : {}),
         ...(replyToMessageId ? { reply_to_message_id: replyToMessageId } : {}),
       };
       const response =
@@ -272,6 +395,9 @@ export class TelegramProvider extends SocialAbstract implements SocialProvider {
           media: m.media,
           caption: i === 0 && index === 0 ? text : undefined,
           parse_mode: 'HTML',
+          ...(m.type === 'video' && m.videoMeta
+            ? { ...m.videoMeta, supports_streaming: true }
+            : {}),
         }));
 
         const response = await telegramBot.sendMediaGroup(
@@ -348,8 +474,8 @@ export class TelegramProvider extends SocialAbstract implements SocialProvider {
     return [];
   }
   // chunkMedia is used to split media into groups of "size". 10 is used here because telegram api allows a maximum of 10 media per group
-  private chunkMedia(media: { type: string; media: string }[], size: number) {
-    const result = [];
+  private chunkMedia<T>(media: T[], size: number) {
+    const result = [] as T[][];
     for (let i = 0; i < media.length; i += size) {
       result.push(media.slice(i, i + size));
     }
