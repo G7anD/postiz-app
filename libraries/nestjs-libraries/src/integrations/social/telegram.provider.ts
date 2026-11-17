@@ -206,10 +206,14 @@ export class TelegramProvider extends SocialAbstract implements SocialProvider {
         } else if (len === 0) {
           len = size - pos;
         }
-        if (len < headerSize) {
+        if (len < headerSize || len > size - pos) {
           break;
         }
         if (head.toString('latin1', 4, 8) === 'moov') {
+          // a real moov box is a few hundred KB; don't trust a bigger size
+          if (len - headerSize > 64 * 1024 * 1024) {
+            return undefined;
+          }
           moov = Buffer.alloc(len - headerSize);
           readSync(fd, moov, 0, moov.length, pos + headerSize);
           break;
