@@ -90,7 +90,7 @@ export const FirstBillingComponent = () => {
 
   const showYouTube = () => {
     modals.openModal({
-      title: 'Grow Fast With Postiz (Play the video)',
+      title: 'Grow Fast With Nashrchi (Play the video)',
       children: (
         <iframe
           className="h-full aspect-video min-w-[800px]"
@@ -144,7 +144,7 @@ export const FirstBillingComponent = () => {
         <div className="flex" onClick={showYouTube}>
           <div className="tablet:mb-[32px] cursor-pointer mt-[32px] flex gap-[10px] items-center underline hover:font-[700]">
             <PlatformIcon identifier="youtube" size={20} />
-            <div>See the power of Postiz (click here)</div>
+            <div>See the power of Nashrchi (click here)</div>
           </div>
         </div>
 
