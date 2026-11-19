@@ -556,7 +556,12 @@ export class InstagramProvider
       name,
       accessToken: access_token,
       refreshToken: access_token,
-      expiresIn: dayjs().add(59, 'days').unix() - dayjs().unix(),
+      // The channel ends up holding a Page token, which Meta issues without an
+      // expiry when it comes from a long-lived user token. refreshToken() below
+      // cannot renew it, so a 59-day expiry only marked healthy channels as
+      // "refresh needed" and stopped their posts (upstream issue #2299).
+      // A revoked or expired token still surfaces as an auth error when used.
+      expiresIn: dayjs().add(200, 'year').unix() - dayjs().unix(),
       picture: picture?.data?.url || '',
       username: '',
     };
