@@ -38,7 +38,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          file: Dockerfile.dev
+          file: Dockerfile.nashrchi
           platforms: linux/amd64
           push: true
           provenance: false
