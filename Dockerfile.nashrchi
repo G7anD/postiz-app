@@ -28,6 +28,7 @@ COPY apps/backend/package.json /app/apps/backend/
 COPY apps/commands/package.json /app/apps/commands/
 COPY apps/extension/package.json /app/apps/extension/
 COPY apps/frontend/package.json /app/apps/frontend/
+COPY apps/frontend/scripts /app/apps/frontend/scripts
 COPY apps/orchestrator/package.json /app/apps/orchestrator/
 COPY apps/sdk/package.json /app/apps/sdk/
 COPY libraries/nestjs-libraries/src/database/prisma/schema.prisma /app/libraries/nestjs-libraries/src/database/prisma/schema.prisma
